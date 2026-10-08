@@ -1,0 +1,96 @@
+name: Manage release
+
+# Run from the Actions tab: pick an action, type the tag, press "Run workflow".
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: What to do
+        required: true
+        type: choice
+        options:
+          - delete
+          - publish-draft
+          - make-draft
+          - set-latest
+          - edit-notes
+      tag:
+        description: Release tag (e.g. v1.0.11)
+        required: true
+        type: string
+      delete_tag:
+        description: "delete: also delete the git tag"
+        type: boolean
+        default: true
+      title:
+        description: "edit-notes: new title (blank = keep)"
+        type: string
+        default: ""
+      notes:
+        description: "edit-notes: new release notes (blank = keep)"
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: manage-release
+  cancel-in-progress: false
+
+jobs:
+  manage:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      ACTION: ${{ inputs.action }}
+      TAG: ${{ inputs.tag }}
+      DELETE_TAG: ${{ inputs.delete_tag }}
+      TITLE: ${{ inputs.title }}
+      NOTES: ${{ inputs.notes }}
+    steps:
+      - name: Check the release exists
+        run: |
+          if ! gh release view "$TAG" --json tagName,isDraft,name; then
+            echo "::error::No release found with tag $TAG"
+            exit 1
+          fi
+
+      - name: Run action
+        run: |
+          case "$ACTION" in
+            delete)
+              if [ "$DELETE_TAG" = "true" ]; then
+                gh release delete "$TAG" --yes --cleanup-tag
+              else
+                gh release delete "$TAG" --yes
+              fi
+              ;;
+            publish-draft) gh release edit "$TAG" --draft=false ;;
+            make-draft)    gh release edit "$TAG" --draft=true ;;
+            set-latest)    gh release edit "$TAG" --latest ;;
+            edit-notes)
+              args=()
+              [ -n "$TITLE" ] && args+=(--title "$TITLE")
+              [ -n "$NOTES" ] && args+=(--notes "$NOTES")
+              if [ ${#args[@]} -eq 0 ]; then
+                echo "::error::edit-notes needs a title or notes"
+                exit 1
+              fi
+              gh release edit "$TAG" "${args[@]}"
+              ;;
+          esac
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### $ACTION $TAG"
+            echo
+            echo "| Tag | Draft | Latest |"
+            echo "|---|---|---|"
+            latest=$(gh release view --json tagName --jq .tagName 2>/dev/null || true)
+            gh release list --limit 20 --json tagName,isDraft \
+              --jq ".[] | \"| \(.tagName) | \(.isDraft) | \(if .tagName == \"$latest\" then \"yes\" else \"\" end) |\""
+          } >> "$GITHUB_STEP_SUMMARY"
