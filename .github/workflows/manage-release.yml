@@ -35,7 +35,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: manage-release
+  group: manage-release-${{ inputs.tag }}
   cancel-in-progress: false
 
 jobs:
